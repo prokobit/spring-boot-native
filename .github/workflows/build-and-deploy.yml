@@ -1,0 +1,52 @@
+name: build-and-deploy
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      -
+        name: Set up JDK 21 for x64
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+          cache: maven
+      -
+        name: Cache SonarCloud packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+      -
+        name: Run the Maven verify phase
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn -B -ntp verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.host.url=https://sonarcloud.io -Dsonar.organization=prokobit \
+            -Dsonar.projectKey=prokobit_spring-boot-native
+      -
+        name: Build and Publish image
+        env:
+          PUBLISH: ${{github.ref == 'refs/heads/main'}}
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          mvn -B -ntp spring-boot:build-image -Pnative -Dmaven.test.skip=true \
+            -Dspring-boot.build-image.publish=${PUBLISH} \
+            -Dspring-boot.build-image.imageName=ghcr.io/prokobit/spring-boot-native:${VERSION} \
+            -Ddocker.publishRegistry.url=ghcr.io \
+            -Ddocker.publishRegistry.username=${{ github.actor }} \
+            -Ddocker.publishRegistry.password=${{ secrets.GITHUB_TOKEN }}
